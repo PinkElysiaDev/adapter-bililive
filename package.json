@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-adapter-bililive",
-  "description": "Bilibili-broadcast message convert",
-  "version": "0.0.1",
+  "description": "Koishi adapter for Bilibili Live (Open Platform + Hybrid + Web modes)",
+  "version": "0.1.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -9,13 +9,24 @@
     "dist"
   ],
   "license": "MIT",
-  "scripts": {},
   "keywords": [
-    "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "adapter",
+    "bilibili",
+    "live",
+    "danmaku"
   ],
-  "devDependencies": {},
+  "koishi": {
+    "description": {
+      "zh": "B站直播适配器（支持开放平台、混合和 Cookie 模式）"
+    },
+    "service": {
+      "required": [
+        "http"
+      ]
+    }
+  },
   "peerDependencies": {
     "koishi": "^4.18.7"
   }

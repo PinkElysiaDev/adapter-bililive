@@ -1,11 +1,46 @@
-import { Context, Schema } from 'koishi'
+import { Context, Session } from 'koishi'
+import { BiliLiveBot } from './bot'
+import { Config } from './config'
+import type { BiliLiveConfig } from './config'
+
+export { Config }
+export type {
+  BiliLiveConfig,
+  CommonConfig,
+  HybridModeConfig,
+  OpenModeConfig,
+  OpenPlatformCredential,
+  WebCredential,
+  WebModeConfig,
+} from './config'
+export { BiliLiveAdapter } from './adapter'
+export { BiliLiveBot } from './bot'
+export * from './types'
+export * from './open/auth'
+export * from './web/auth'
 
 export const name = 'adapter-bililive'
+export const inject = { required: ['http'] }
 
-export interface Config {}
+declare module 'koishi' {
+  interface Events {
+    'bililive/danmaku'(session: Session): void
+    'bililive/gift'(session: Session): void
+    'bililive/superchat'(session: Session): void
+    'bililive/guard'(session: Session): void
+    'bililive/like'(session: Session): void
+    'bililive/enter'(session: Session): void
+    'bililive/follow'(session: Session): void
+    'bililive/warning'(session: Session): void
+    'bililive/live-start'(session: Session): void
+    'bililive/live-end'(session: Session): void
+    'bililive/cut-off'(session: Session): void
+    'bililive/watched-change'(session: Session): void
+    'bililive/online'(session: Session): void
+    'bililive/code-expired'(session: Session): void
+  }
+}
 
-export const Config: Schema<Config> = Schema.object({})
-
-export function apply(ctx: Context, config: Config) {
-  // write your plugin here
+export function apply(ctx: Context, config: BiliLiveConfig): void {
+  ctx.plugin(BiliLiveBot, config)
 }
