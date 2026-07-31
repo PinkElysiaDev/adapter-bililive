@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-adapter-bililive",
   "description": "Koishi adapter for Bilibili Live (Open Platform + Hybrid + Web modes)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -9,6 +9,14 @@
     "dist"
   ],
   "license": "MIT",
+  "homepage": "https://github.com/PinkElysiaDev/adapter-bililive",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PinkElysiaDev/adapter-bililive.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PinkElysiaDev/adapter-bililive/issues"
+  },
   "keywords": [
     "koishi",
     "plugin",
@@ -22,6 +30,9 @@
       "zh": "B站直播适配器（支持开放平台、混合和 Cookie 模式）"
     },
     "service": {
+      "implements": [
+        "adapter"
+      ],
       "required": [
         "http"
       ]
