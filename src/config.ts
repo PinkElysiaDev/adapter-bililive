@@ -33,10 +33,8 @@ export interface CommonConfig {
   uid: number
   sendInterval: number
   maxDanmakuLength: number
-  enableGift: boolean
+  reportSelf: boolean
   giftComboDuration: number
-  enableEntry: boolean
-  enableLike: boolean
   heartbeatInterval: number
   maxReconnectAttempts: number
   reconnectInterval: number
@@ -94,13 +92,11 @@ export const Config: Schema<BiliLiveConfig> = Schema.intersect([
     uid: Schema.number().min(1).required().description('主播 UID'),
     sendInterval: Schema.number().min(0).default(1000).role('ms').description('弹幕发送间隔'),
     maxDanmakuLength: Schema.number().min(1).default(20).description('单条弹幕最大长度'),
-    enableGift: Schema.boolean().default(true).description('接收礼物事件'),
+    reportSelf: Schema.boolean().default(false).description('上报自身消息'),
     giftComboDuration: Schema.number().min(0).default(3000).role('ms').description('礼物连击合并时间'),
-    enableEntry: Schema.boolean().default(false).description('接收入场事件'),
-    enableLike: Schema.boolean().default(false).description('接收点赞事件'),
     heartbeatInterval: Schema.number().min(1000).default(30000).role('ms').description('WebSocket 心跳间隔'),
     maxReconnectAttempts: Schema.number().min(0).default(5).description('最大重连次数'),
     reconnectInterval: Schema.number().min(0).default(3000).role('ms').description('重连间隔基数'),
-    debug: Schema.boolean().default(false).description('输出完整消息链路调试日志（不包含认证凭据）'),
+    debug: Schema.boolean().default(false).description('输出完整消息链路调试日志'),
   }),
 ]) as Schema<BiliLiveConfig>

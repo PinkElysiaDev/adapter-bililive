@@ -1,9 +1,8 @@
 import { Context, Session } from 'koishi'
 import { BiliLiveBot } from './bot'
-import { Config } from './config'
 import type { BiliLiveConfig } from './config'
 
-export { Config }
+export { Config } from './config'
 export type {
   BiliLiveConfig,
   CommonConfig,
@@ -15,9 +14,6 @@ export type {
 } from './config'
 export { BiliLiveAdapter } from './adapter'
 export { BiliLiveBot } from './bot'
-export * from './types'
-export * from './open/auth'
-export * from './web/auth'
 
 export const name = 'adapter-bililive'
 export const inject = { required: ['http'] }

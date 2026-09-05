@@ -1,24 +1,19 @@
-import { h, Universal } from 'koishi'
+import { h } from 'koishi'
 import type { BiliLiveBot } from '../bot'
 import { GUARD_NAMES } from '../types'
-import { toMilliseconds } from '../utils'
-
-function baseEvent(bot: BiliLiveBot) {
-  return {
-    channel: { id: bot.channelId, type: Universal.Channel.Type.TEXT, name: bot.roomName },
-    guild: { id: bot.guildId, name: bot.roomName },
-  }
-}
+import { roomScopes, toMilliseconds, trackGiftCombo } from '../utils'
 
 function getDanmakuId(info: any[], uid: string): string {
+  const fallback = `dm_${uid}_${info[0]?.[4] || Date.now()}`
   try {
     const source = info[0]?.[9]
-    const extra = typeof source === 'object'
-      ? (typeof source.extra === 'string' ? JSON.parse(source.extra) : source)
+    // extra 可能是 JSON 字符串、对象或缺省
+    const extra = source && typeof source === 'object'
+      ? (typeof source.extra === 'string' ? JSON.parse(source.extra) : source.extra)
       : JSON.parse(source || '{}')
-    return String(extra.msg_id || `dm_${uid}_${info[0]?.[4]}`)
+    return String(extra?.msg_id || fallback)
   } catch {
-    return `dm_${uid}_${info[0]?.[4] || Date.now()}`
+    return fallback
   }
 }
 
@@ -28,8 +23,7 @@ function handleDanmaku(bot: BiliLiveBot, message: any): void {
   const text = String(info[1] ?? '')
   const uid = String(info[2][0] ?? '')
   const uname = String(info[2][1] ?? '')
-  // 自消息过滤（防回声）
-  if (bot.senderUid && uid === bot.senderUid) {
+  if (bot.isSelfMessage(uid, uname)) {
     bot.debug('跳过自身弹幕回声：uid=%s uname=%s content=%j', uid, uname, text)
     return
   }
@@ -37,13 +31,12 @@ function handleDanmaku(bot: BiliLiveBot, message: any): void {
     bot.debug('跳过发送去重命中的回声：content=%j', text)
     return
   }
-  // 缓存成员信息
   bot.rememberMember(uid, uname, '')
   const timestamp = toMilliseconds(info[0]?.[4])
   bot.dispatch(bot.session({
     type: 'message',
     timestamp,
-    ...baseEvent(bot),
+    ...roomScopes(bot),
     user: { id: uid, name: uname },
     message: { id: getDanmakuId(info, uid), content: text, elements: [h.text(text)], timestamp },
   }))
@@ -61,46 +54,35 @@ function handleDanmaku(bot: BiliLiveBot, message: any): void {
 }
 
 function handleGift(bot: BiliLiveBot, message: any): void {
-  if (!bot.config.enableGift) return
   const data = message.data ?? {}
   const key = String(data.batch_combo_id || data.tid || `${data.uid}_${data.giftId}_${data.timestamp || Date.now()}`)
-  const latestNum = Number(data.combo_num || data.super_batch_gift_num || data.num || 1)
-  const existing = bot.pendingGifts.get(key)
-  if (existing) {
-    clearTimeout(existing.timer)
-    existing.data = data
-    existing.totalNum = latestNum
-  } else {
-    bot.pendingGifts.set(key, { data, totalNum: latestNum, timer: undefined as any })
-  }
-  const entry = bot.pendingGifts.get(key)!
-  entry.timer = setTimeout(() => {
-    bot.pendingGifts.delete(key)
-    const latest = entry.data
+  // Web 协议的 combo 字段总是给出最新累计值，直接替换
+  trackGiftCombo(bot, key, data, () => Number(data.combo_num || data.super_batch_gift_num || data.num || 1), (latest, totalNum) => {
     const timestamp = toMilliseconds(latest.timestamp)
     const uid = String(latest.uid ?? '')
     const uname = String(latest.uname ?? '')
     const giftName = String(latest.giftName ?? latest.gift_name ?? '')
+    bot.rememberMember(uid, uname, latest.face)
     bot.dispatch(bot.session({
       type: 'bililive-gift',
       timestamp,
-      ...baseEvent(bot),
+      ...roomScopes(bot),
       user: { id: uid, name: uname, avatar: latest.face },
       message: {
         id: String(latest.tid || key),
-        content: `[礼物] ${uname} 赠送 ${giftName} x${entry.totalNum}`,
+        content: `[礼物] ${uname} 赠送 ${giftName} x${totalNum}`,
         elements: [h('bililive:gift', {
           giftId: latest.giftId,
           giftName,
-          giftNum: entry.totalNum,
+          giftNum: totalNum,
           price: latest.price,
           paid: latest.coin_type === 'gold',
         })],
         timestamp,
       },
     }))
-    bot.dispatchCustom('bililive/gift', { ...latest, giftNum: entry.totalNum }, timestamp)
-  }, bot.config.giftComboDuration)
+    bot.dispatchCustom('bililive/gift', { ...latest, giftNum: totalNum }, timestamp)
+  })
 }
 
 function handleSuperChat(bot: BiliLiveBot, message: any): void {
@@ -109,7 +91,7 @@ function handleSuperChat(bot: BiliLiveBot, message: any): void {
   bot.dispatch(bot.session({
     type: 'bililive-superchat',
     timestamp,
-    ...baseEvent(bot),
+    ...roomScopes(bot),
     user: { id: String(data.uid ?? ''), name: data.user_info?.uname, avatar: data.user_info?.face },
     message: {
       id: `sc_${data.id}`,
@@ -128,7 +110,7 @@ function handleGuard(bot: BiliLiveBot, message: any): void {
   bot.dispatch(bot.session({
     type: 'bililive-guard',
     timestamp,
-    ...baseEvent(bot),
+    ...roomScopes(bot),
     user: { id: String(data.uid ?? ''), name: data.username },
     message: {
       id: `guard_${data.uid}_${data.start_time}`,
@@ -143,25 +125,24 @@ function handleGuard(bot: BiliLiveBot, message: any): void {
 function handleInteract(bot: BiliLiveBot, message: any): void {
   const data = message.data ?? {}
   const timestamp = toMilliseconds(data.timestamp)
-  if (data.msg_type === 1 && bot.config.enableEntry) {
+  if (data.msg_type === 1) {
     const uid = String(data.uid ?? '')
     const uname = String(data.uname ?? '')
     const uface = String(data.uface ?? '')
-    // 缓存成员信息
-    if (uid) bot.rememberMember(uid, uname, uface)
-    // 派发标准 guild-member-added 事件，让欢迎插件触发
     if (uid) {
+      bot.rememberMember(uid, uname, uface)
+      // 派发标准 guild-member-added 事件，让欢迎类插件触发
       bot.dispatch(bot.session({
         type: 'guild-member-added',
         timestamp,
-        ...baseEvent(bot),
+        ...roomScopes(bot),
         user: { id: uid, name: uname, avatar: uface },
       }))
     }
     bot.dispatchCustom('bililive/enter', data, timestamp)
   } else if (data.msg_type === 2 || data.msg_type === 4) {
     bot.dispatchCustom('bililive/follow', data, timestamp)
-  } else if (data.msg_type === 6 && bot.config.enableLike) {
+  } else if (data.msg_type === 6) {
     bot.dispatchCustom('bililive/like', data, timestamp)
   }
 }

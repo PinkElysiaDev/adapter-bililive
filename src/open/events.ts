@@ -1,15 +1,8 @@
-import { h, Universal } from 'koishi'
+import { h } from 'koishi'
 import type { BiliLiveBot } from '../bot'
 import type { OpenDMData, OpenGiftData, OpenGuardData, OpenInteractData, OpenSuperChatData, WarningData } from '../types'
 import { GUARD_NAMES } from '../types'
-import { toMilliseconds } from '../utils'
-
-function channel(bot: BiliLiveBot, roomId: number) {
-  return {
-    channel: { id: `live:${roomId}`, type: Universal.Channel.Type.TEXT, name: bot.roomName },
-    guild: { id: `live:${roomId}`, name: bot.roomName },
-  }
-}
+import { roomScopes, toMilliseconds, trackGiftCombo } from '../utils'
 
 function handleDanmaku(bot: BiliLiveBot, data: OpenDMData): void {
   const openId = data.open_id || String(data.uid)
@@ -18,7 +11,6 @@ function handleDanmaku(bot: BiliLiveBot, data: OpenDMData): void {
     bot.anchorOpenId = data.open_id
     bot.debug('懒识别主播 open_id：%s', data.open_id)
   }
-  // 自消息过滤（防回声）
   if (bot.isSelfMessage(openId, data.uname)) {
     bot.debug('跳过自身弹幕回声：uname=%s open_id=%s content=%j', data.uname, openId, data.msg)
     return
@@ -27,13 +19,12 @@ function handleDanmaku(bot: BiliLiveBot, data: OpenDMData): void {
     bot.debug('跳过发送去重命中的回声：content=%j', data.msg)
     return
   }
-  // 缓存成员信息，供欢迎插件 getGuildMember 查询
   bot.rememberMember(openId, data.uname, data.uface)
   const timestamp = toMilliseconds(data.timestamp)
   bot.dispatch(bot.session({
     type: 'message',
     timestamp,
-    ...channel(bot, data.room_id),
+    ...roomScopes(bot, data.room_id),
     user: { id: openId, name: data.uname, avatar: data.uface },
     message: { id: data.msg_id, content: data.msg, elements: [h.text(data.msg)], timestamp },
   }))
@@ -41,43 +32,32 @@ function handleDanmaku(bot: BiliLiveBot, data: OpenDMData): void {
 }
 
 function handleGift(bot: BiliLiveBot, data: OpenGiftData): void {
-  if (!bot.config.enableGift) return
   const key = data.combo_id || `${data.uid}_${data.gift_id}_${data.timestamp}`
-  const existing = bot.pendingGifts.get(key)
-  if (existing) {
-    clearTimeout(existing.timer)
-    existing.data = data
-    existing.totalNum = data.combo_num || existing.totalNum + data.gift_num
-  } else {
-    bot.pendingGifts.set(key, { data, totalNum: data.combo_num || data.gift_num, timer: undefined as any })
-  }
-  const entry = bot.pendingGifts.get(key)!
-  entry.timer = setTimeout(() => {
-    bot.pendingGifts.delete(key)
-    const latest = entry.data as OpenGiftData
+  // combo_num 缺失时按 gift_num 自行累加
+  trackGiftCombo(bot, key, data, previous => data.combo_num || (previous ?? 0) + data.gift_num, (latest, totalNum) => {
     const timestamp = toMilliseconds(latest.timestamp)
     const openId = latest.open_id || String(latest.uid)
     bot.rememberMember(openId, latest.uname, latest.uface)
     bot.dispatch(bot.session({
       type: 'bililive-gift',
       timestamp,
-      ...channel(bot, latest.room_id),
+      ...roomScopes(bot, latest.room_id),
       user: { id: openId, name: latest.uname, avatar: latest.uface },
       message: {
         id: latest.msg_id,
-        content: `[礼物] ${latest.uname} 赠送 ${latest.gift_name} x${entry.totalNum}`,
+        content: `[礼物] ${latest.uname} 赠送 ${latest.gift_name} x${totalNum}`,
         elements: [h('bililive:gift', {
           giftId: latest.gift_id,
           giftName: latest.gift_name,
-          giftNum: entry.totalNum,
+          giftNum: totalNum,
           price: latest.price,
           paid: latest.paid,
         })],
         timestamp,
       },
     }))
-    bot.dispatchCustom('bililive/gift', { ...latest, gift_num: entry.totalNum }, timestamp)
-  }, bot.config.giftComboDuration)
+    bot.dispatchCustom('bililive/gift', { ...latest, gift_num: totalNum }, timestamp)
+  })
 }
 
 function handleSuperChat(bot: BiliLiveBot, data: OpenSuperChatData): void {
@@ -87,7 +67,7 @@ function handleSuperChat(bot: BiliLiveBot, data: OpenSuperChatData): void {
   bot.dispatch(bot.session({
     type: 'bililive-superchat',
     timestamp,
-    ...channel(bot, data.room_id),
+    ...roomScopes(bot, data.room_id),
     user: { id: openId, name: data.uname, avatar: data.uface },
     message: {
       id: data.msg_id,
@@ -107,7 +87,7 @@ function handleGuard(bot: BiliLiveBot, data: OpenGuardData): void {
   bot.dispatch(bot.session({
     type: 'bililive-guard',
     timestamp,
-    ...channel(bot, data.room_id),
+    ...roomScopes(bot, data.room_id),
     user: { id: openId, name: data.user_info.uname, avatar: data.user_info.uface },
     message: {
       id: data.msg_id,
@@ -120,22 +100,19 @@ function handleGuard(bot: BiliLiveBot, data: OpenGuardData): void {
 }
 
 function handleLike(bot: BiliLiveBot, data: OpenInteractData): void {
-  if (!bot.config.enableLike) return
   bot.dispatchCustom('bililive/like', data, toMilliseconds(data.timestamp))
 }
 
 function handleEnter(bot: BiliLiveBot, data: OpenInteractData): void {
-  if (!bot.config.enableEntry) return
-  const timestamp = toMilliseconds(data.timestamp)
   const openId = data.open_id || String(data.uid)
-  // 缓存成员信息
-  if (openId) bot.rememberMember(openId, data.uname, data.uface)
-  // 派发标准 guild-member-added 事件，让 delaywelcome / groupwelcome-message 等欢迎插件触发
+  const timestamp = toMilliseconds(data.timestamp)
   if (openId) {
+    bot.rememberMember(openId, data.uname, data.uface)
+    // 派发标准 guild-member-added 事件，让欢迎类插件触发
     bot.dispatch(bot.session({
       type: 'guild-member-added',
       timestamp,
-      ...channel(bot, data.room_id),
+      ...roomScopes(bot, data.room_id),
       user: { id: openId, name: data.uname, avatar: data.uface },
     }))
   }

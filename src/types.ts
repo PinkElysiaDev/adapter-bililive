@@ -129,7 +129,7 @@ export interface WarningData {
 export interface PendingGift<T = any> {
   data: T
   totalNum: number
-  timer: NodeJS.Timeout
+  timer: NodeJS.Timeout | undefined
 }
 
 export interface LiveConnection {
@@ -137,9 +137,7 @@ export interface LiveConnection {
   stop(): Promise<void>
 }
 
-export interface DanmakuSender {
-  sendDanmaku(message: string): Promise<{ id?: string }>
-}
-
 export const GUARD_NAMES: Record<number, string> = { 1: '总督', 2: '提督', 3: '舰长' }
 export const OPEN_API_BASE = 'https://live-open.biliapi.com'
+/** B 站 HTTP API 请求超时，防止接口挂起拖住发送/心跳/重连链路 */
+export const REQUEST_TIMEOUT = 15000

@@ -1,30 +1,62 @@
-import { Context, h, MessageEncoder } from 'koishi'
+import { Context, h, MessageEncoder, Universal } from 'koishi'
 import type { BiliLiveBot } from './bot'
 import { sleep } from './utils'
+
+// 按字素（用户感知字符）切分，避免把组合 emoji（ZWJ 序列、肤色修饰符等）拆成乱码
+const GraphemeSegmenter = (Intl as any).Segmenter as
+  | (new (locale?: string, options?: { granularity?: string }) => { segment(input: string): Iterable<{ segment: string }> })
+  | undefined
+
+function splitGraphemes(content: string): string[] {
+  if (!GraphemeSegmenter) return Array.from(content)
+  return Array.from(new GraphemeSegmenter('zh', { granularity: 'grapheme' }).segment(content), part => part.segment)
+}
+
+/** 按字素把长弹幕切成不超过 maxLength 的分片，保证每片都是完整字符 */
+function splitDanmakuChunks(content: string, maxLength: number): string[] {
+  const chunks: string[] = []
+  let current: string[] = []
+  for (const grapheme of splitGraphemes(content)) {
+    if (current.length >= maxLength) {
+      chunks.push(current.join(''))
+      current = []
+    }
+    current.push(grapheme)
+  }
+  if (current.length) chunks.push(current.join(''))
+  return chunks
+}
 
 export class BiliLiveMessageEncoder extends MessageEncoder<Context, BiliLiveBot> {
   private buffer = ''
 
   async flush(): Promise<void> {
+    if (this.channelId !== this.bot.channelId) {
+      this.bot.logger.warn('目标频道 %s 与直播间频道 %s 不一致，弹幕仍将发送到直播间', this.channelId, this.bot.channelId)
+    }
     const content = this.buffer.trim()
     this.buffer = ''
     if (!content) return
-    const maxLength = Math.max(1, this.bot.config.maxDanmakuLength)
-    const chunks = Array.from(content).reduce<string[]>((result, character) => {
-      const last = result[result.length - 1]
-      if (!last || Array.from(last).length >= maxLength) result.push(character)
-      else result[result.length - 1] += character
-      return result
-    }, [])
-    this.bot.debug('MessageEncoder：原始长度=%s，分片数=%s，单片上限=%s', Array.from(content).length, chunks.length, maxLength)
+    const chunks = splitDanmakuChunks(content, this.bot.config.maxDanmakuLength)
+    this.bot.debug('MessageEncoder：原始长度=%s，分片数=%s，单片上限=%s', splitGraphemes(content).length, chunks.length, this.bot.config.maxDanmakuLength)
     for (let index = 0; index < chunks.length; index++) {
       if (index > 0) await sleep(this.bot.config.sendInterval)
       this.bot.debug('MessageEncoder：发送第 %s/%s 片 content=%j', index + 1, chunks.length, chunks[index])
       try {
         const result = await this.bot.sendDanmaku(chunks[index])
-        this.results.push({ id: result.id ?? '' })
+        const message: Universal.Message = { id: result.id ?? '', content: chunks[index] }
+        this.results.push(message)
         // 记录已发送弹幕文本，供自消息回声兜底过滤
         this.bot.recordSent(chunks[index])
+        // 派发 send 事件（analytics 数据统计、status 概况等均依赖此事件统计发送消息）
+        const session = this.bot.session({
+          type: 'send',
+          channel: { id: this.bot.channelId, type: Universal.Channel.Type.TEXT, name: this.bot.roomName },
+          guild: { id: this.bot.guildId, name: this.bot.roomName },
+          user: { id: this.bot.senderUid ?? this.bot.selfId },
+          message: { ...message, elements: [h.text(chunks[index])], timestamp: Date.now() },
+        })
+        session.app.emit(session, 'send', session)
       } catch (error) {
         this.bot.logger.error('MessageEncoder 发送失败：chunk=%s/%s error=%s', index + 1, chunks.length, String(error))
         throw error
